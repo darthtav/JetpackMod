@@ -1,6 +1,8 @@
 ﻿using UnityEngine;
+using UnityEngine.XR;
 using ThunderRoad;
 using OVR;
+using Valve.VR;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -11,25 +13,57 @@ namespace Jetpack
 {
     public class ItemJetpack : MonoBehaviour
     {
-        Rigidbody Playerbody;   //ref to the body
+        Rigidbody Playerbody; //ref to the body
         Item item;              //ref to the item
         bool hover;
         bool equipped;
         bool flyloop;
+        bool jumpButton;
+        bool isSteam;
 
         AudioSource liftOff;
         AudioSource landing;
         AudioSource flying;
 
-        
+        Vector2 rightStick;
+
+        UnityEngine.XR.InputDevice device;
 
         public void Awake()
         {
+            var rightHandDevices = new List<UnityEngine.XR.InputDevice>();
+            UnityEngine.XR.InputDevices.GetDevicesAtXRNode(UnityEngine.XR.XRNode.RightHand, rightHandDevices);
+
+            if (SteamVR.active)
+            {
+                isSteam = true;
+            }
+            else
+            {
+                isSteam = false;
+            }
+         
+            if (rightHandDevices.Count == 1)
+            {
+                device = rightHandDevices[0];
+                Debug.Log(string.Format("Device name '{0}' with role '{1}'", device.name, device.role.ToString()));
+                Debug.Log("Device assigned.");
+            }
+            else if (rightHandDevices.Count > 1)
+            {
+                Debug.Log("Found more than one right hand!");
+            }
+            else
+            {
+                Debug.Log("Nothing Found");
+            }
+
             Playerbody = Player.local.locomotion.rb;        //This is how you assign the body to the variable
             item = GetComponent<Item>();                    //This is how you assign the item itself (Jetpack in this case) to a variable
             hover = false;
             equipped = false;
             flyloop = false;
+            jumpButton = false;
 
             item.OnSnapEvent += equipShoulder;              //These two lines are events that trigger when the item is equipped, everytime the item is equipped to the shoulder these are called.
             item.OnUnSnapEvent += removeShoulder;
@@ -37,12 +71,22 @@ namespace Jetpack
             liftOff = item.GetCustomReference("JetpackLift").GetComponent<AudioSource>();       //Audio calls, custom references created in the unity engine. Will not work unless you create the custom reference 
             landing = item.GetCustomReference("JetpackLanding").GetComponent<AudioSource>();    // and drag audio source into the transform section under the main prefab.
             flying = item.GetCustomReference("JetpackLoopLong").GetComponent<AudioSource>();
-
         }
 
         public void Update()        //called every frame
         {
-            OVRInput.Update();
+            if (isSteam)
+            {
+                steamMode();
+            }
+            else
+            {
+                oculusMode();
+            }
+        }
+
+        public void steamMode()
+        {
             if (Player.local.locomotion.isGrounded)     //on ground keeping gravity on
             {
                 hitGround();
@@ -54,20 +98,72 @@ namespace Jetpack
                 flying.Play();
             }
 
-            if (canFly())
+            if (equipped && !hover)
             {
-                toggleHover();              // Toggle for jetpack on and off
+                if (SteamVR_Actions.default_Turn.axis.y >= .85)
+                {
+                    liftOff.Play();
+                    toggleHover();
+                    thrustUp();
+                }
             }
-            else if (hover)
+            else if (equipped && hover)
             {
-                if (OVRInput.Get(OVRInput.Button.SecondaryThumbstickUp))
+                if (SteamVR_Actions.default_Turn.axis.y >= .85)
                 {
                     thrustUp();
                 }
-                if (OVRInput.Get(OVRInput.Button.SecondaryThumbstickDown))
+                if (SteamVR_Actions.default_Turn.axis.y <= -.85) 
                 {
                     thrustDown();
                 }
+                if (SteamVR_Actions.default_Jump.stateDown) 
+                {
+                    toggleHover();
+                }
+            }
+        }
+
+        public void oculusMode()
+        {
+            device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxisClick, out jumpButton);
+            device.TryGetFeatureValue(UnityEngine.XR.CommonUsages.primary2DAxis, out rightStick);
+
+            if (Player.local.locomotion.isGrounded)     //on ground keeping gravity on
+            {
+                hitGround();
+            }
+
+            if (hover && !flyloop && !Player.local.locomotion.isGrounded)       //playing jetpack sound loop while in air
+            {
+                flyloop = true;
+                flying.Play();
+            }
+
+            if (equipped && !hover)
+            {
+                if (rightStick.y >= .85) 
+                {
+                    liftOff.Play();
+                    toggleHover();
+                    thrustUp();
+                }
+            }
+            else if (equipped && hover)
+            {
+                if (rightStick.y >= .85) 
+                {
+                    thrustUp();
+                }
+                if (rightStick.y <= -.85)
+                {
+                    thrustDown();
+                }
+                if (jumpButton)
+                {
+                    toggleHover();
+                }
+
             }
         }
 
@@ -112,7 +208,7 @@ namespace Jetpack
 
         public bool canFly()
         {
-            return (OVRInput.GetDown(OVRInput.Button.SecondaryThumbstick) && !Player.local.locomotion.isGrounded && equipped);
+            return (jumpButton && !Player.local.locomotion.isGrounded && equipped);
         }
 
         public void thrustUp()
